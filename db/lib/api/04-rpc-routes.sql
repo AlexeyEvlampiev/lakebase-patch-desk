@@ -1,0 +1,48 @@
+/*
+<pgmi-meta
+    id="a7f01000-0004-4000-8000-000000000001"
+    idempotent="false">
+  <description>
+    RPC routing: route table for method-name-based routing
+  </description>
+  <sortKeys>
+    <key>004/004</key>
+  </sortKeys>
+</pgmi-meta>
+*/
+
+-- ============================================================================
+-- RPC Route Table
+-- ============================================================================
+
+CREATE TABLE api.rpc_route (
+    handler_object_id uuid PRIMARY KEY
+        REFERENCES api.handler(object_id) ON DELETE CASCADE,
+
+    method_name text NOT NULL UNIQUE,
+    auto_log boolean NOT NULL DEFAULT true
+);
+
+-- method_name already has a unique B-tree from the UNIQUE constraint; no extra index.
+
+COMMENT ON TABLE api.rpc_route IS
+    'JSON-RPC method routing. Maps a unique method name to a handler for dispatch by api.rpc_invoke.';
+COMMENT ON COLUMN api.rpc_route.method_name IS
+    'JSON-RPC method name. Looked up by api.rpc_resolve during dispatch.';
+COMMENT ON COLUMN api.rpc_route.auto_log IS
+    'When true, the gateway logs request/response to api.rpc_exchange after invocation.';
+
+-- ============================================================================
+-- Grant Permissions
+-- ============================================================================
+
+DO $$
+DECLARE
+    v_api_role TEXT := pg_temp.deployment_setting('database_api_role');
+    v_admin_role TEXT := pg_temp.deployment_setting('database_admin_role');
+BEGIN
+    EXECUTE format('GRANT SELECT ON api.rpc_route TO %I', v_api_role);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON api.rpc_route TO %I', v_admin_role);
+END $$;
+
+SELECT pg_temp.exempt_from_rls('api.rpc_route', 'the handler registry: framework metadata, written by registration at deploy');

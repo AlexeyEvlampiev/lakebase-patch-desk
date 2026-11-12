@@ -1,0 +1,10 @@
+# How Databricks Apps runs the patch desk. The runtime sets the Streamlit
+# port and address itself. The app connects to Lakebase as the signed-in
+# user (app/db.py), on the database lakebase_apps; the endpoint host is read
+# at session start.
+command: ["streamlit", "run", "streamlit_app.py"]
+env:
+  - name: ENDPOINT_NAME
+    value: projects/lakebase-patch-desk/branches/production/endpoints/primary
+  - name: PGDATABASE
+    value: lakebase_apps

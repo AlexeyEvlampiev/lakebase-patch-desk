@@ -1,0 +1,35 @@
+# Databricks bundle state and local config
+.databricks/
+.databrickscfg
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+.pgpass
+secrets/
+*.secret
+*.secrets
+
+# pgmi params files may hold secrets
+params*.json
+!params*.example.json
+
+# Claude Code personal settings
+.claude/settings.local.json
+
+# Python / editors / OS
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.vscode/
+.idea/
+.DS_Store

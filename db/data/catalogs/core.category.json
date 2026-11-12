@@ -1,0 +1,8 @@
+[
+    { "code": "BEV",   "name": "Beverages" },
+    { "code": "BAKE",  "name": "Bakery" },
+    { "code": "DAIRY", "name": "Dairy" },
+    { "code": "SNACK", "name": "Snacks" },
+    { "code": "HOME",  "name": "Household" },
+    { "code": "FRESH", "name": "Fresh produce" }
+]

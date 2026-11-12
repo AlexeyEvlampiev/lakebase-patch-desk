@@ -1,0 +1,37 @@
+# The export to the lakehouse: a serverless job that merges the products
+# changed by approved patches in lakebase_apps into the Delta table
+# <catalog>.patch_desk.product, then marks those patches exported. It runs as
+# the deploy service principal, like db_deploy, and calls only the database's
+# job routines api.job_patch_export_batch and api.job_patch_mark_exported
+# (db/README.md, "The export job"). Paused by default: run it on demand
+# (databricks bundle run patch_export) or unpause the schedule.
+resources:
+  jobs:
+    patch_export:
+      name: lakebase-patch-desk-patch-export
+      tags:
+        project: lakebase-patch-desk
+      usage_policy_id: ${var.usage_policy_id}
+      max_concurrent_runs: 1
+      schedule:
+        quartz_cron_expression: "0 0/15 * * * ?"
+        timezone_id: UTC
+        pause_status: PAUSED
+      tasks:
+        - task_key: export
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/patch_desk_job.py
+            parameters:
+              - export
+              - --endpoint=projects/lakebase-patch-desk/branches/production/endpoints/primary
+              - --database=lakebase_apps
+              - --catalog=${var.export_catalog}
+              - --agent-app-id=${var.agent_app_id}
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "5"
+            dependencies:
+              - databricks-sdk>=0.81.0
+              - pg8000

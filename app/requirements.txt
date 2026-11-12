@@ -1,0 +1,5 @@
+# Pinned: the Apps runtime installs these over its Python 3.11 environment.
+streamlit==1.67.0
+openpyxl==3.1.5
+pg8000==1.31.6
+databricks-sdk==0.163.0

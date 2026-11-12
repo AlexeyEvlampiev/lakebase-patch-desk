@@ -1,0 +1,37 @@
+# The Lakebase patch desk demo as one Declarative Automation Bundle.
+# Deploy with scripts/deploy.sh; it runs the bundle commands as the deploy
+# service principal, so the principal owns what the bundle creates.
+bundle:
+  name: lakebase-patch-desk
+
+include:
+  - resources/*.yml
+
+variables:
+  usage_policy_id:
+    description: >-
+      Optional ID of the serverless usage policy that tags the demo's spend
+      (made by hand, see docs/deploy.md). Empty means none.
+    default: ""
+  export_catalog:
+    description: >-
+      Unity Catalog catalog the patch_export job writes to (schema
+      patch_desk). Empty means the workspace's default catalog, which is
+      the workspace catalog in a new workspace.
+    default: ""
+
+  agent_app_id:
+    description: >-
+      Application ID of the AI agent's service principal, which
+      scripts/deploy.sh creates. The export job grants it read access to
+      the export schema; empty means no agent and no grant. No agent job
+      runs yet.
+    default: ""
+
+targets:
+  demo:
+    default: true
+    mode: production
+    # The host comes from DATABRICKS_HOST, which the scripts set.
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}

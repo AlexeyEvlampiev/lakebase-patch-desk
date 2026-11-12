@@ -1,0 +1,22 @@
+# The patch desk app. It works as the signed-in user: Databricks Apps
+# forwards the user's token, and the app asks Lakebase for that user's
+# database login (scope postgres). iam.current-user:read is not a scope an
+# app may request (400 INVALID_PARAMETER_VALUE, seen 2026-11-09).
+# The app's own service principal does no user work: it has no Lakebase
+# role and no database resource. scripts/deploy.sh starts it with
+# `bundle run patch_desk`.
+resources:
+  apps:
+    patch_desk:
+      name: lakebase-patch-desk
+      description: Patch desk - upload Excel fixes to product data, checked by Postgres
+      source_code_path: ../app
+      usage_policy_id: ${var.usage_policy_id}
+      user_api_scopes:
+        - postgres
+      permissions:
+        # Members of either group may open the app; Postgres decides the rest.
+        - group_name: patch-desk-uploaders
+          level: CAN_USE
+        - group_name: patch-desk-approvers
+          level: CAN_USE

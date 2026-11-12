@@ -1,0 +1,24 @@
+# pgmi project configuration
+# CLI flags override these values. Environment variables (PGHOST, PGDATABASE, ...)
+# override them too; pgmi names each one it applies over a value set here.
+
+connection:
+  database: lakebase_apps     # Target database (the demo passes -d)
+  host: localhost             # PostgreSQL host
+  port: 5432                  # PostgreSQL port
+  sslmode: prefer             # SSL mode: disable, allow, prefer, require, verify-ca, verify-full
+  # username: postgres        # PostgreSQL user (default: current OS user)
+
+# Parameters passed to deploy.sql
+# See session.xml for all declared parameters and their descriptions.
+# env (dev, test or prod) is required and deliberately not set here, so a
+# committed file can never make a production deploy look like dev. The database
+# remembers its env and refuses a redeploy that names another. Pass it per deploy:
+#   local:  pgmi deploy . -d mydb --param env=dev
+#           (role passwords default to 'postgres': disposable databases only)
+#   shared: PGMI_PARAM_DATABASE_ADMIN_PASSWORD=... pgmi deploy . -d mydb --param env=prod
+#           (the environment, stdin or a params file; never --param for a secret)
+# params:
+#   some_setting: value
+
+timeout: 5m                   # Deployment timeout

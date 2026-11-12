@@ -1,0 +1,50 @@
+# Product data desk: one light theme, styled as a well-kept stock
+# ledger. A serif for page titles is the one distinctive element;
+# body and tables stay plain. Teal accent, cool neutrals, no custom CSS.
+# Fonts load from Google Fonts in the viewer's browser.
+
+[theme]
+base = "light"
+
+# Colour: ink on paper, teal for actions and links.
+primaryColor = "#0F766E"
+linkColor = "#0F766E"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F6F5"
+textColor = "#17242B"
+borderColor = "#D9E1DF"
+showWidgetBorder = true
+linkUnderline = false
+
+# Type: Fraunces for headings, Public Sans for text, IBM Plex Mono for the
+# column names a user types into the Excel file.
+font = "'Public Sans':https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600&display=swap"
+headingFont = "Fraunces:https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&display=swap"
+codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap"
+baseFontSize = 15
+headingFontSizes = ["34px", "22px", "18px", "16px", "15px", "14px"]
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+codeFontSize = "0.85rem"
+codeTextColor = "#0F5F58"
+codeBackgroundColor = "#EAF2F0"
+metricValueFontSize = "2rem"
+metricValueFontWeight = 600
+
+# Shape and spacing: firmer corners, less empty space above the title.
+baseRadius = "6px"
+buttonRadius = "6px"
+paddingTop = "1.5rem"
+
+# Badge and status colours used by app/labels.py.
+grayColor = "#5E6E70"
+blueColor = "#2563EB"
+greenColor = "#15803D"
+redColor = "#C2410C"
+orangeColor = "#B45309"
+violetColor = "#7C3AED"
+yellowColor = "#A16207"
+
+# Tables: a lightly tinted header row, like a ledger's column heads.
+dataframeBorderColor = "#D9E1DF"
+dataframeHeaderBackgroundColor = "#EEF4F2"
+dataframeHeaderTextColor = "#33464B"

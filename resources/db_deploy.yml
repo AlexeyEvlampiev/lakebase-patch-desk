@@ -1,0 +1,61 @@
+# The database deploy: a serverless job that runs pgmi against the demo's
+# Lakebase project, deploying db/ into the database lakebase_apps, then gives
+# the patch desk's group members their database logins, template principals
+# and mapped logins there. The bundle is deployed by the deploy service
+# principal, so the job runs as that principal, the project's owner.
+# scripts/deploy.sh runs it after every bundle deploy.
+resources:
+  jobs:
+    db_deploy:
+      name: lakebase-patch-desk-db-deploy
+      tags:
+        project: lakebase-patch-desk
+      usage_policy_id: ${var.usage_policy_id}
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: pgmi_deploy_template
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/patch_desk_job.py
+            parameters:
+              - pgmi
+              - --db-dir=${workspace.file_path}/db
+              - --endpoint=projects/lakebase-patch-desk/branches/production/endpoints/primary
+              - --maintenance-database=databricks_postgres
+              - --database=lakebase_apps
+              - --env=test
+              # The admin role's password, made for each run and passed only
+              # in the environment; nobody signs in as that role on the demo.
+              - --admin-password
+              # Roles and schemas Lakebase adds on its own (db/session.xml).
+              - '--param=provider_role_pattern=databricks\_%'
+              - '--param=provider_schemas=["__db_system"]'
+              # oidc_issuers: the workspace's own issuer, read by the job.
+              - --workspace-oidc-issuer
+        # Each person's login, template principal, membership in the demo
+        # organization and the mapping. Missing login roles are made in the
+        # maintenance database, so the provider extension that makes them
+        # never lands in lakebase_apps.
+        - task_key: provision_principals
+          depends_on:
+            - task_key: pgmi_deploy_template
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/patch_desk_job.py
+            parameters:
+              - provision-principals
+              - --endpoint=projects/lakebase-patch-desk/branches/production/endpoints/primary
+              - --maintenance-database=databricks_postgres
+              - --database=lakebase_apps
+              - --uploaders-group=patch-desk-uploaders
+              - --approvers-group=patch-desk-approvers
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "5"
+            dependencies:
+              # The Postgres API (get_endpoint, generate_database_credential)
+              # needs a newer SDK than the one in the base environment.
+              - databricks-sdk>=0.81.0
+              # Pure-Python Postgres driver: serverless may run on aarch64.
+              - pg8000

@@ -1,0 +1,166 @@
+/*
+<pgmi-meta
+    id="a7f01000-0002-4000-8000-000000000001"
+    idempotent="false">
+  <description>
+    Handler registry: central table for all protocol handlers with pg_proc snapshot
+  </description>
+  <sortKeys>
+    <key>004/002</key>
+  </sortKeys>
+</pgmi-meta>
+*/
+
+-- ============================================================================
+-- Handler Registry Table
+-- ============================================================================
+-- object_id core.entity_id opts this table into entity lifecycle standards:
+-- created_at and deleted_at columns are injected by the deploy-end sweep.
+-- The inline call below ensures columns exist immediately for indexes.
+
+CREATE TABLE api.handler (
+    object_id core.entity_id PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    handler_type api.handler_type NOT NULL,
+    handler_func regprocedure NOT NULL UNIQUE,
+    handler_function_name text NOT NULL,
+
+    accepts text[] NOT NULL DEFAULT ARRAY['*/*'],
+    produces text[] NOT NULL DEFAULT ARRAY['application/json'],
+    response_headers jsonb NOT NULL DEFAULT '{}',
+    access text NOT NULL CONSTRAINT handler_access_check
+        CHECK (access IN ('public', 'authenticated', 'organization', 'permission')),
+
+    min_transaction_isolation text
+        CONSTRAINT handler_min_transaction_isolation_check
+        CHECK (min_transaction_isolation IS NULL
+               OR min_transaction_isolation IN ('read committed', 'repeatable read', 'serializable')),
+
+    read_only boolean NOT NULL DEFAULT false,
+
+    handler_exec_sql text NOT NULL,
+    handler_sql_submitted text NOT NULL,
+    handler_sql_canonical text NOT NULL,
+    def_hash bytea NOT NULL,
+
+    returns_type regtype NOT NULL,
+    returns_set boolean NOT NULL,
+    volatility text NOT NULL CHECK (volatility IN ('immutable','stable','volatile')),
+    parallel text NOT NULL CHECK (parallel IN ('safe','restricted','unsafe')),
+    leakproof boolean NOT NULL,
+    security text NOT NULL CHECK (security IN ('definer','invoker')),
+    language_name text NOT NULL,
+    owner_name name NOT NULL,
+
+    title text,
+    description text,
+
+    input_json_schema    api.json_schema,
+    output_json_schema   api.json_schema,
+    input_xml_schema     api.xml_schema,
+    output_xml_schema    api.xml_schema
+);
+
+DO $$ BEGIN PERFORM pg_temp.apply_entity_table_standards('api.handler'); END $$;
+
+CREATE INDEX ix_handler_type ON api.handler(handler_type);
+
+-- ============================================================================
+-- Table and Column Documentation
+-- ============================================================================
+
+COMMENT ON TABLE api.handler IS
+    'Central registry for all protocol handlers (REST, RPC, MCP). Captures pg_proc metadata at registration time as an immutable snapshot. object_id core.entity_id opts the table into entity lifecycle standards (created_at, deleted_at injected by the deploy-end sweep).';
+
+COMMENT ON COLUMN api.handler.handler_type IS
+    'Protocol type: rest, rpc, mcp_tool, mcp_resource, mcp_prompt, queue';
+
+COMMENT ON COLUMN api.handler.handler_func IS
+    'OID reference to pg_proc (regprocedure). Used for function existence checks and introspection.';
+
+COMMENT ON COLUMN api.handler.handler_function_name IS
+    'Fully qualified function name (schema.function) for display and debugging.';
+
+COMMENT ON COLUMN api.handler.accepts IS
+    'MIME types this handler accepts for request bodies, from the accepts metadata key. Without it, a REST handler that declares an inputSchema accepts application/json and any other handler */*. rest_invoke enforces it: a request whose Content-Type matches none of these returns 415 pgmi.unsupported_media_type.';
+
+COMMENT ON COLUMN api.handler.produces IS
+    'MIME types this handler produces. Default: application/json';
+
+COMMENT ON COLUMN api.handler.response_headers IS
+    'Additional HTTP headers to include in responses (JSONB object).';
+
+COMMENT ON COLUMN api.handler.access IS
+    'Declared access: public (no identity), authenticated (a resolved principal, no organization needed), organization (a resolved principal in an organization session) or permission (a resolved principal holding any of the handler''s permissions in api.handler_permission). Set from the access / permissions handler-metadata keys; a registration without one fails.';
+
+COMMENT ON COLUMN api.handler.min_transaction_isolation IS
+    'Minimum transaction isolation floor (read committed | repeatable read | serializable) the gateway enforces before dispatching. NULL means no requirement (treated as read committed). Set from the minTransactionIsolation handler-metadata key; see lib/api/00-transaction-isolation.sql.';
+
+COMMENT ON COLUMN api.handler.read_only IS
+    'Route declares it only reads. The client gateway opens the transaction READ ONLY (an accidental write becomes a hard error) and may route the request to a read replica when the isolation floor permits (see internal.transaction_policy_replica_safe). The DB gateway rejects dispatch in a read-write transaction (pgmi.transaction_read_only_required). Set from the readOnly handler-metadata key.';
+
+COMMENT ON COLUMN api.handler.handler_exec_sql IS
+    'Executable SQL statement generated for handler invocation at runtime.';
+
+COMMENT ON COLUMN api.handler.handler_sql_submitted IS
+    'Original SQL submitted during registration (for debugging and auditing).';
+
+COMMENT ON COLUMN api.handler.handler_sql_canonical IS
+    'Canonicalized function definition from pg_get_functiondef() at registration time.';
+
+COMMENT ON COLUMN api.handler.def_hash IS
+    'SHA-256 hash of handler_sql_canonical. Used to detect definition drift.';
+
+COMMENT ON COLUMN api.handler.returns_type IS
+    'Return type OID from pg_proc snapshot (regtype).';
+
+COMMENT ON COLUMN api.handler.returns_set IS
+    'True if function returns SETOF (multiple rows).';
+
+COMMENT ON COLUMN api.handler.volatility IS
+    'Function volatility: immutable (deterministic), stable (reads DB), or volatile (may modify).';
+
+COMMENT ON COLUMN api.handler.parallel IS
+    'Parallel safety: safe (can run in parallel), restricted (leader only), or unsafe (not parallel safe).';
+
+COMMENT ON COLUMN api.handler.leakproof IS
+    'True if function is LEAKPROOF (no side-channel data leakage via errors or timing).';
+
+COMMENT ON COLUMN api.handler.security IS
+    'Execution context: definer (runs as function owner) or invoker (runs as calling user).';
+
+COMMENT ON COLUMN api.handler.language_name IS
+    'Implementation language: sql or plpgsql (any other language extension the deployment has installed also works).';
+
+COMMENT ON COLUMN api.handler.owner_name IS
+    'Role that owns the handler function.';
+
+COMMENT ON COLUMN api.handler.description IS
+    'Human-readable description (typically from pg_description or handler metadata).';
+
+COMMENT ON COLUMN api.handler.input_json_schema IS
+    'JSON Schema describing request parameters. Returned by api.mcp_list_tools() as inputSchema and by discovery endpoints for all protocols.';
+
+COMMENT ON COLUMN api.handler.output_json_schema IS
+    'JSON Schema describing response structure. Returned by api.mcp_list_tools() as outputSchema. For REST/RPC handlers, the gateway merges it into responses when response_headers contains x-include-schema=true.';
+
+COMMENT ON COLUMN api.handler.input_xml_schema IS
+    'XML Schema (XSD) describing request parameters for XML-based handlers.';
+
+COMMENT ON COLUMN api.handler.output_xml_schema IS
+    'XML Schema (XSD) describing response structure for XML-based handlers.';
+
+-- ============================================================================
+-- Grant Permissions
+-- ============================================================================
+
+DO $$
+DECLARE
+    v_api_role TEXT := pg_temp.deployment_setting('database_api_role');
+    v_admin_role TEXT := pg_temp.deployment_setting('database_admin_role');
+BEGIN
+    EXECUTE format('GRANT SELECT ON api.handler TO %I', v_api_role);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON api.handler TO %I', v_admin_role);
+END $$;
+
+SELECT pg_temp.exempt_from_rls('api.handler', 'the handler registry: framework metadata, written by registration at deploy');

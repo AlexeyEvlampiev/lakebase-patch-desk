@@ -1,0 +1,23 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Repo guard
+        run: scripts/check-repo.sh
+      - name: Unit tests (app and jobs)
+        run: |
+          pip install -r app/requirements.txt pytest
+          pytest -q app/tests jobs/tests
