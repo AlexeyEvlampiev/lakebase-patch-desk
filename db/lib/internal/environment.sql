@@ -3,7 +3,7 @@
     id="ac23b704-b4a1-4d61-8c34-45b9fd946f76"
     idempotent="false">
   <description>
-    The environment this database was deployed as. deploy.sql refuses a
+    The environment this database was deployed as. deploy/parameters.sql refuses a
     redeploy whose env differs, unless relabel_environment names the new label.
   </description>
   <sortKeys>
@@ -21,6 +21,6 @@ CREATE TABLE internal.environment (
 COMMENT ON TABLE internal.environment IS
     'One row: dev, test or prod, from the env parameter of the first deploy. Changed only by a deploy with relabel_environment.';
 
-INSERT INTO internal.environment (label) VALUES (current_setting('deployment.env'));
+INSERT INTO internal.environment (label) VALUES (current_setting('pgmi.env'));
 
 SELECT pg_temp.exempt_from_rls('internal.environment', 'deploy bookkeeping: written and read by deploy.sql only');

@@ -192,3 +192,137 @@ BEGIN
     PERFORM pg_temp.test_act_as(NULL);
     RAISE NOTICE '  ✓ proposals: an agent proposes, only a person with proposals.decide confirms, once, as themselves';
 END $$;
+
+DO $$
+DECLARE
+    v_message text;
+BEGIN
+    PERFORM api.create_or_replace_mcp_handler(jsonb_build_object(
+        'id', 'f4570000-0000-4000-8000-000000000011', 'type', 'tool', 'effect', 'write', 'reversible', true,
+        'name', 'tp_serial_target', 'permissions', jsonb_build_array('task.write'), 'description', 'A write that needs serializable',
+        'minTransactionIsolation', 'serializable'),
+        $body$ BEGIN RETURN api.mcp_tool_result('[]', (request).request_id); END; $body$);
+    v_message := NULL;
+    BEGIN
+        PERFORM api.create_or_replace_mcp_handler(jsonb_build_object(
+            'id', 'f4570000-0000-4000-8000-000000000012', 'type', 'tool', 'effect', 'proposal',
+            'proposes', 'tp_serial_target', 'name', 'tp_propose_serial', 'permissions', jsonb_build_array('task.write'), 'description', 'Proposes a serializable write'),
+            $body$ BEGIN RETURN api.mcp_tool_result('[]', (request).request_id); END; $body$);
+    EXCEPTION WHEN invalid_parameter_value THEN
+        v_message := SQLERRM;
+    END;
+    IF coalesce(v_message, '') NOT LIKE '%"tp_propose_serial" proposes "tp_serial_target"%serializable%' THEN
+        RAISE EXCEPTION 'TEST FAILED: a tool above read committed cannot be proposed, got %', COALESCE(v_message, 'no error');
+    END IF;
+
+    v_message := NULL;
+    BEGIN
+        PERFORM api.create_or_replace_mcp_handler(jsonb_build_object(
+            'id', 'f4570000-0000-4000-8000-000000000001', 'type', 'tool', 'effect', 'write', 'reversible', true,
+            'name', 'tp_create_probe', 'description', 'Creates a probe row as its caller',
+            'permissions', jsonb_build_array('task.write'), 'minTransactionIsolation', 'repeatable read',
+            'inputSchema', jsonb_build_object('type', 'object')),
+            $body$ BEGIN RETURN api.mcp_tool_result('[]', (request).request_id); END; $body$);
+    EXCEPTION WHEN invalid_parameter_value THEN
+        v_message := SQLERRM;
+    END;
+    IF coalesce(v_message, '') NOT LIKE '%"tp_create_probe" declares minTransactionIsolation repeatable read%"tp_propose_probe"%' THEN
+        RAISE EXCEPTION 'TEST FAILED: a proposed tool cannot raise its floor above read committed, got %', COALESCE(v_message, 'no error');
+    END IF;
+
+    PERFORM api.create_or_replace_mcp_handler(jsonb_build_object(
+        'id', 'f4570000-0000-4000-8000-000000000013', 'type', 'tool', 'effect', 'write', 'reversible', true,
+        'name', 'tp_committed_target', 'permissions', jsonb_build_array('task.write'), 'description', 'A write at read committed',
+        'minTransactionIsolation', 'read committed'),
+        $body$ BEGIN RETURN api.mcp_tool_result('[]', (request).request_id); END; $body$);
+    PERFORM api.create_or_replace_mcp_handler(jsonb_build_object(
+        'id', 'f4570000-0000-4000-8000-000000000014', 'type', 'tool', 'effect', 'proposal',
+        'proposes', 'tp_committed_target', 'name', 'tp_propose_committed', 'permissions', jsonb_build_array('task.write'), 'description', 'Proposes a read committed write'),
+        $body$ BEGIN RETURN api.mcp_tool_result('[]', (request).request_id); END; $body$);
+END $$;
+
+SELECT api.create_or_replace_mcp_handler(jsonb_build_object(
+    'id', 'f4570000-0000-4000-8000-000000000021', 'type', 'tool', 'effect', 'write', 'reversible', true,
+    'name', 'tp_operate_probe', 'description', 'A write only a platform operator may make',
+    'permissions', jsonb_build_array('platform.operate')),
+    $body$ BEGIN RETURN api.mcp_tool_result('[]', (request).request_id); END; $body$);
+
+SELECT api.create_or_replace_mcp_handler(jsonb_build_object(
+    'id', 'f4570000-0000-4000-8000-000000000022', 'type', 'tool', 'effect', 'proposal', 'proposes', 'tp_operate_probe',
+    'name', 'tp_propose_operate', 'description', 'Proposes a platform write',
+    'permissions', jsonb_build_array('task.propose')),
+    $body$
+DECLARE
+    v_id uuid := membership.fn_propose('tp_operate_probe', (request).arguments);
+BEGIN
+    RETURN api.mcp_tool_result('[]', (request).request_id, v_id IS NULL, jsonb_build_object('proposalId', v_id));
+END;
+$body$);
+
+DO $$
+DECLARE
+    v_agent    jsonb := pg_temp.test_mcp_context('test|alice-001', current_setting('test.corp_id')::uuid, 'agent.reader');
+    v_owner    extensions.hstore := pg_temp.test_session_headers('test|owner-001', current_setting('test.corp_id')::uuid);
+    v_id       uuid;
+    v_response api.http_response;
+    v_logged   jsonb;
+BEGIN
+    v_id := ((api.mcp_call_tool('tp_propose_operate', '{}', v_agent, '"o"')).envelope
+             ->'result'->'structuredContent'->>'proposalId')::uuid;
+    v_response := api.rest_invoke('POST', '/proposals/' || v_id || '/confirm', v_owner, NULL::bytea);
+    IF (v_response).status_code IS DISTINCT FROM 409
+       OR api.content_json((v_response).content)->>'code' IS DISTINCT FROM 'membership.proposal.tool_refused'
+       OR coalesce((api.content_json((v_response).content)->'answer')::text, '') NOT LIKE '%"pgmi.forbidden"%'
+       OR (pg_temp.tp_proposal(v_id)).status IS DISTINCT FROM 'pending' THEN
+        RAISE EXCEPTION 'TEST FAILED: a confirmer without the target''s permission gets 409 with the nested refusal, got % %',
+            (v_response).status_code, api.content_json((v_response).content);
+    END IF;
+
+    SELECT api.content_json((e.response).content) INTO v_logged
+    FROM api.rest_exchange e
+    WHERE (e.request).url LIKE '%/proposals/' || v_id || '/confirm'
+    ORDER BY e.sequence_number DESC
+    LIMIT 1;
+    IF coalesce((v_logged->'answer')::text, '') NOT LIKE '%"pgmi.forbidden"%' THEN
+        RAISE EXCEPTION 'TEST FAILED: the confirm request''s exchange row records the nested refusal, got %', v_logged;
+    END IF;
+    IF EXISTS (SELECT FROM api.access_denial d JOIN api.mcp_route r ON r.handler_object_id = d.handler_object_id
+               WHERE r.mcp_name = 'tp_operate_probe')
+       OR EXISTS (SELECT FROM api.mcp_exchange x JOIN api.mcp_route r ON r.handler_object_id = x.handler_object_id
+                  WHERE r.mcp_name = 'tp_operate_probe') THEN
+        RAISE EXCEPTION 'TEST FAILED: the nested refusal rolls back with the 409, so it leaves no access_denial or mcp_exchange row; if that changed, update the README audit note';
+    END IF;
+END $$;
+
+SELECT api.create_or_replace_mcp_handler(jsonb_build_object(
+    'id', 'f4570000-0000-4000-8000-000000000031', 'type', 'tool', 'effect', 'proposal', 'proposes', 'tp_create_probe',
+    'name', 'tp_propose_named', 'description', 'Proposes the tool its caller names',
+    'permissions', jsonb_build_array('task.propose')),
+    $body$
+DECLARE
+    v_id uuid := membership.fn_propose((request).arguments->>'tool', '{"title": "named"}');
+BEGIN
+    RETURN api.mcp_tool_result('[]', (request).request_id, v_id IS NULL, jsonb_build_object('proposalId', v_id));
+END;
+$body$);
+
+DO $$
+DECLARE
+    v_agent jsonb := pg_temp.test_mcp_context('test|alice-001', current_setting('test.corp_id')::uuid, 'agent.reader');
+    v_read  text := (SELECT mcp_name FROM api.mcp_route WHERE effect->>'effect' = 'read' ORDER BY mcp_name LIMIT 1);
+    v_id    text;
+    v_tool  text;
+BEGIN
+    FOREACH v_tool IN ARRAY ARRAY['no_such_tool', v_read] LOOP
+        v_id := (api.mcp_call_tool('tp_propose_named', jsonb_build_object('tool', v_tool), v_agent, '"n"')).envelope
+                ->'result'->'structuredContent'->>'proposalId';
+        IF v_id IS NOT NULL OR v_read IS NULL THEN
+            RAISE EXCEPTION 'TEST FAILED: fn_propose refuses %, which is not a live write tool, got %', v_tool, v_id;
+        END IF;
+    END LOOP;
+    v_id := (api.mcp_call_tool('tp_propose_named', '{"tool": "tp_create_probe"}', v_agent, '"n"')).envelope
+            ->'result'->'structuredContent'->>'proposalId';
+    IF (pg_temp.tp_proposal(v_id::uuid)).tool_name IS DISTINCT FROM 'tp_create_probe' THEN
+        RAISE EXCEPTION 'TEST FAILED: fn_propose records a live write tool, got %', v_id;
+    END IF;
+END $$;

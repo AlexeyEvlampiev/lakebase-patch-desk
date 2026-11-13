@@ -38,7 +38,10 @@ code from the template. Readers rarely need to touch it.
 ## About this project
 
 A [pgmi](https://github.com/vvka-141/pgmi) project made with
-`pgmi init db -t advanced` (pgmi 0.14.1), adapted for the patch desk. The `db_deploy` job deploys it into
+`pgmi init db -t advanced` (pgmi 0.14.1), adapted for the patch desk, and
+restructured to the layout of the advanced template on pgmi main (commit
+`8e39366f`): `deploy.sql` reads top to bottom, and its setup lives in
+`deploy/`, one file per concern. It deploys with pgmi 0.14.1. The `db_deploy` job deploys it into
 the database `lakebase_apps`.
 
 What this project adds to the generated code: each
@@ -52,7 +55,7 @@ agent inbox is built (planned).
 | `membership/06b-database-login-rls.sql` | its forced row-level security; only the kernel writes |
 | `membership/05d-database-logins.sql` | `membership.fn_map_database_login(role, principal, organization)`, called by provisioning as the kernel role |
 | `membership/03-session.sql` | the request context comes from a mapped `session_user` before anything else |
-| `deploy.sql`, `session.xml` | group role `<database>_caller`: `USAGE` on schema `api` and `EXECUTE` on the REST, RPC and MCP entry points only |
+| `deploy/bootstrap.sql`, `deploy/schemas.sql`, `deploy/settings.sql`, `deploy/parameters.xml`, `lib/api/13-entry-point-grants.sql` | group role `<database>_caller`: `USAGE` on schema `api` and `EXECUTE` on the REST, RPC and MCP entry points only |
 | `api/__test__/database_logins/` | tests: a mapped login acts as itself; separate logins (superuser deploys only) |
 
 **How a person gets access.** The `db_deploy` job's task
@@ -61,7 +64,7 @@ after every deploy, as the deploy service principal. For each member of
 `patch-desk-uploaders` and `patch-desk-approvers` it gives:
 
 1. their login role, named by their email (`databricks_create_role` when it
-   is missing), `CONNECT` on the database (`deploy.sql` revokes it from
+   is missing), `CONNECT` on the database (`deploy/bootstrap.sql` revokes it from
    `PUBLIC`) and the role `<database>_caller`;
 2. a template user principal with that email, membership in the demo
    organization (slug `demo`) and the role `patch.approver` or
@@ -190,10 +193,10 @@ Tests: `core/__test__/test_patch_export.sql`, and
 `jobs/tests/test_export_db.py` after the app's data layer test in
 `local-check.sh`.
 
-Two changes to generated files keep the deploy output free of warnings: `deploy.sql` leaves out a provider's event-trigger
-functions in schema `public` when it revokes `EXECUTE` from `PUBLIC`, and
-`lib/__test__/test_jobs.sql` checks that no job lock is held instead of
-releasing one that was never taken.
+One change to generated files keeps the deploy output free of warnings:
+`deploy/finalize.sql` leaves out a provider's event-trigger functions in
+schema `public` when it revokes `EXECUTE` from `PUBLIC`
+(`pg_temp.provider_event_trigger` in `deploy/providers.sql`).
 
 Check a change locally with `db/local-check.sh` (needs docker and pgmi). It
 deploys twice as a non-superuser owner with `CREATEROLE`, `CREATEDB` and
@@ -221,7 +224,7 @@ Choose it when the database should hold the business logic and serve REST, RPC a
 
 **Requires PostgreSQL 18 or newer.** `deploy.sql` refuses an older server before it creates any objects; the empty database pgmi created for the deploy stays.
 
-**No superuser required.** A login with `CREATEROLE` and `CREATEDB` deploys it: `deploy.sql` grants itself the roles it creates. [Production Guide](https://github.com/vvka-141/pgmi/blob/main/docs/PRODUCTION.md#managed-cloud-postgresql) shows the statement that creates that login. `TestAdvancedTemplate_DeploysWithoutSuperuser` deploys it twice that way. Entity lifecycle standards (`created_at`/`deleted_at`) are enforced by a deploy-end sweep over `pg_temp` functions — no DDL event trigger, no superuser privilege. Runs on managed providers that offer PostgreSQL 18, such as AWS RDS, Cloud SQL and Neon.
+**No superuser required.** A login with `CREATEROLE` and `CREATEDB` deploys it: `deploy.sql` grants itself the roles it creates. [Production Guide](https://github.com/vvka-141/pgmi/blob/main/docs/PRODUCTION.md#managed-cloud-postgresql) shows the statement that creates that login. `TestAdvancedTemplate_DeploysWithoutSuperuser` deploys it twice that way. Entity lifecycle standards (`created_at`/`deleted_at`) are enforced by a deploy-end sweep over `pg_temp` functions — no DDL event trigger, no superuser privilege. For a managed host, see [On a managed host](#on-a-managed-host).
 
 ## Deployment Architecture
 
@@ -283,8 +286,8 @@ myproject/
 ├── data/authorization.json   # Permission vocabulary and roles, synced every deploy
 ├── data/catalogs/            # Reference data synced by pg_temp.sync_catalog (create when needed)
 ├── gateways/PROTOCOL.md      # The wire rules for a gateway; never deployed
-├── deploy.sql                # Deployment orchestrator (includes infrastructure bootstrap)
-├── session.xml               # Parameter declarations consumed by deploy.sql
+├── deploy.sql                # The deployment, top to bottom: phases, transaction, file loop
+├── deploy/                   # Setup deploy.sql runs by name (settings.sql: the lists you edit; parameters.xml: the declared parameters)
 ├── pgmi.yaml                 # Project configuration (connection, params, timeout)
 ├── ARCHITECTURE.md           # Design rationale
 └── README.md
@@ -298,7 +301,22 @@ myproject/
 | `core/` | Your entity tables (run once) and kernels, the functions that write them | Yes - create it for your domain |
 | `api/` | Your HTTP handlers (REST, RPC, MCP) | Yes - your application code |
 | `__test__/` | Tests of the whole project; an API test goes in `api/__test__/`, over its Alice fixture | Yes - add tests here |
-| `deploy.sql` | Deployment phases, transaction control, infrastructure bootstrap | Yes - customize deployment |
+| `deploy.sql` | Deployment phases, transaction control, the file loop | Yes - customize deployment |
+| `deploy/` | Setup `deploy.sql` runs by name: settings, providers, parameters, file rules, roles, schemas, ledger, finalize | `settings.sql` yes; others rarely, in the file whose name fits |
+
+### deploy.sql and deploy/
+
+`deploy.sql` reads as the deployment, top to bottom, in five banners:
+PREFLIGHT, BOOTSTRAP, DEPLOY, VERIFY and TAIL. Its setup code lives in
+`deploy/`, a fixed set of files `deploy.sql` runs by name through
+`pg_temp.run_file`. They are not in the plan and carry no `<pgmi-meta>` block.
+
+- `deploy/settings.sql` holds the lists a project edits: required extensions,
+  database settings, schema grants, tenant columns and the optional guards.
+- Add code to the `deploy/` file whose name fits. A new `deploy/` file is a
+  design change, not a place for one more statement.
+- `deploy/` files run inside the deploy's transaction: they never `COMMIT` and
+  never build an index `CONCURRENTLY`. Those go in the TAIL of `deploy.sql`.
 
 ## Trimming the template
 
@@ -351,6 +369,24 @@ In CI, map the secret straight to the variable
 missing secret arrives empty and pgmi refuses it (exit 10). Stdin
 (`--params-file -`) and a private params file also work; see the
 [pgmi Security Guide](https://github.com/vvka-141/pgmi/blob/main/docs/SECURITY.md#pipeline-patterns).
+
+### On a managed host
+
+Every host needs the same three things: PostgreSQL 18, a login with
+`CREATEDB` and `CREATEROLE` (the server's administrator login has both), and
+the extensions `uuid-ossp`, `pgcrypto`, `pg_trgm`, `hstore` and `btree_gist`.
+A first deploy checks the login and Azure's extension list before it changes
+anything, and names what is missing.
+
+| Host | Before the first deploy |
+|---|---|
+| Azure Database for PostgreSQL | Add the five extensions to the server parameter `azure.extensions`, keeping what it lists: `az postgres flexible-server parameter set --resource-group <group> --server-name <server> --name azure.extensions --value UUID-OSSP,PGCRYPTO,PG_TRGM,HSTORE,BTREE_GIST`. Sign in with `--azure` |
+| Amazon RDS and Aurora | Sign in with `--aws`; pass the RDS certificate bundle with `--sslrootcert` |
+| Google Cloud SQL | Sign in with `--google --google-instance <project:region:instance>`. An IAM user needs `ALTER ROLE "<user>" CREATEDB CREATEROLE`, run as `postgres` |
+| Databricks Lakebase | Connect to the maintenance database `databricks_postgres` ([Lakebase guide](https://vvka-141.github.io/pgmi/docs/lakebase/)). The deploy recognises Lakebase and sets `provider_role_pattern` and `provider_schemas` itself; with `env=dev` the admin password is a generated one, because Lakebase refuses `postgres` |
+
+Connect to the server directly, not through a transaction pooler (PgBouncer
+on port 6432, RDS Proxy): a deploy is one session.
 
 ### 2. Test the Examples
 
@@ -617,7 +653,9 @@ connection carries no second factor, so it never holds a platform permission.
 **Proposals: an agent proposes, a person confirms.** A tool with
 `"effect": "proposal"` names, in `"proposes"`, a registered tool with
 `"effect": "write"` (registration refuses a missing, unknown or non-write
-target, and `"reversible"`: nothing changes until someone confirms). Its body
+target, and `"reversible"`: nothing changes until someone confirms; it also
+refuses a target above read committed, because confirming runs at read
+committed, so such a tool is called directly). Its body
 calls only `membership.fn_propose(<target>, (request).arguments)` and answers
 `{"proposalId": ...}` at once; the call never waits for a person. It is called
 under the permission it declares, like any tool, so a role's grant list stays
@@ -628,7 +666,11 @@ A person signed in on the web, acting as themselves and holding
 (`POST /proposals/{id}/reject`) each. Confirming runs the target tool through
 the MCP dispatcher as that person, so the target's own permission applies to
 them, and answers the proposal with the tool's `answer`; a target that refuses
-answers 409 `membership.proposal.tool_refused` and leaves it pending. An agent
+answers 409 `membership.proposal.tool_refused` and leaves it pending. The 409
+rolls back everything the confirm wrote, the target's `api.access_denial` and
+`api.mcp_exchange` rows included; the refusal is recorded in the confirm
+request's `api.rest_exchange` row, whose response carries the target's error,
+refusal code included, under `answer`. An agent
 never decides (403 `membership.proposal.human_required`), and a decided
 proposal is decided for good (409 `membership.proposal.decided`).
 
@@ -639,7 +681,7 @@ Any handler may declare a minimum isolation floor (`minTransactionIsolation`); a
 | Parameter | Default | Required | Description |
 |-----------|---------|----------|-------------|
 | `env` | - | **Yes** | `dev`, `test` or `prod`. See [Environments](#environments) |
-| `database_admin_password` | `postgres` when `env=dev` on a new or dev-labelled database | **Yes**, otherwise | Admin role password |
+| `database_admin_password` | `postgres` when `env=dev` on a new or dev-labelled database (on Lakebase, which refuses a weak password, a generated value) | **Yes**, otherwise | Admin role password |
 | `relabel_environment` | empty | No | Change the database's label; must equal `env` |
 | `upgrade` | `false` | No | `true` refuses unless the database already carries the label `env` names |
 | `platform_operators` | `[]` | No | JSON array of platform operators (`email`, optional `displayName`, `issuer` + `subject`); synced every deploy, a person left out loses the status; an email-only entry names the address's verified holder, or a new verified person (an unverified holder is never promoted); an entry with `issuer` and `subject` names that login's person and verifies the address on it, refused (22023) when another person holds the address verified |
@@ -648,8 +690,8 @@ Any handler may declare a minimum isolation floor (`minTransactionIsolation`); a
 | `exchange_retention_days` | `30` | No | Days the exchange log keeps a row: the retention of the `purge_exchanges` job and the default of `POST /admin/maintenance/purge-exchanges` |
 | `api_base_path` | `/api` | No | The path the gateway serves REST under; the OpenAPI `servers` url, so generated clients and `/docs` call the right paths |
 | `www_authenticate` | `Session` | No | The `WWW-Authenticate` challenge on a 401 (RFC 9110 §15.5.2), e.g. `Bearer realm="app"` |
-| `provider_role_pattern` | empty | No | A managed provider's own roles, as a `LIKE` pattern (Lakebase: `databricks\_%`); every deploy revokes their `CREATE` on the template's schemas and `extensions` and their whole-table privileges (`TRUNCATE`, `REFERENCES`, `TRIGGER`, `MAINTAIN`) on its tables; the guards ignore their `USAGE` on schemas, their row-level DML on membership tables and event-trigger functions another role keeps in `public`. Refused when it matches a template role. Row-level security still binds them ([Production Guide](https://github.com/vvka-141/pgmi/blob/main/docs/PRODUCTION.md#grants-a-provider-makes-on-its-own)) |
-| `provider_schemas` | `[]` | No | A managed provider's own schemas, as a JSON array (Lakebase: `["__db_system"]`); the schema guard leaves them out. Refused when it names a template schema |
+| `provider_role_pattern` | `databricks\_%` on Lakebase, else empty | No | A managed provider's own roles, as a `LIKE` pattern (Lakebase: `databricks\_%`); every deploy revokes their `CREATE` on the template's schemas and `extensions` and their whole-table privileges (`TRUNCATE`, `REFERENCES`, `TRIGGER`, `MAINTAIN`) on its tables; the guards ignore their `USAGE` on schemas, their row-level DML on membership tables and event-trigger functions another role keeps in `public`. Refused when it matches a template role. Row-level security still binds them ([Production Guide](https://github.com/vvka-141/pgmi/blob/main/docs/PRODUCTION.md#grants-a-provider-makes-on-its-own)) |
+| `provider_schemas` | `["__db_system"]` on Lakebase, else `[]` | No | A managed provider's own schemas, as a JSON array (Lakebase: `["__db_system"]`); the schema guard leaves them out. Refused when it names a template schema |
 | `database_owner_role` | `<dbname>_owner` | No | Owner role (NOLOGIN). An existing owner, kernel or api role on which another login holds ADMIN, or an owner, admin or kernel role with a member the deploy did not grant, is refused (22023), never adopted |
 | `database_admin_role` | `<dbname>_admin` | No | Admin role (LOGIN, full access). The deploy creates it; an existing role that is not a member of this database's owner role is refused (22023), never adopted |
 | `database_api_role` | `<dbname>_api` | No | API group role (NOLOGIN, permission bundle) |
@@ -659,8 +701,18 @@ Any handler may declare a minimum isolation floor (`minTransactionIsolation`); a
 Pass the required password parameters as `PGMI_PARAM_*` environment variables,
 stdin or a params file, never as command-line `--param` — see [Deploy](#1-deploy).
 
-Defaults sit beside the values, in one `CASE` in `deploy.sql`. A parameter
+Defaults sit beside the values, in one `CASE` in `deploy/parameters.sql`. A parameter
 without a default is required, and a blank value counts as not given.
+
+The parameters are declared in `deploy/parameters.xml`; a parameter it does not
+declare is refused. Each value is readable in SQL as
+`current_setting('pgmi.<key>')`, or through `pg_temp.deployment_setting('<key>')`
+during the deploy.
+
+Every deploy sets the admin role's password to `database_admin_password`, so
+the parameter is the password's source of truth: rotating it is a redeploy with
+the new value, for example from a key vault through
+`PGMI_PARAM_DATABASE_ADMIN_PASSWORD`.
 
 ## Environments
 
@@ -686,7 +738,7 @@ file-contract check and the run-once drift check all ask
 `pg_temp.deploys_file(path)`, so a run-once `dev/` file that ran while the
 database was dev is not drift on a `test` deploy. Tests run in every
 environment, so a `__test__/` under `dev/` is refused; branch on
-`current_setting('deployment.env')` in an ordinary test instead.
+`current_setting('pgmi.env')` in an ordinary test instead.
 
 ## Sign-in, sessions and connections
 
@@ -783,8 +835,8 @@ only to logins you trust to state who calls.
 **Each role executes exactly its list.** The api role executes the gateway
 entry points (`api.rest_invoke`, `api.rpc_invoke`, `api.rpc_resolve`,
 `api.mcp_handle_request`, the route-policy lookups, `api.catalog_version`,
-`api.open_login_session` and `api.close_login_session`), granted once at the end of
-`deploy.sql`. The admin login has no grant of its own; it is a member of the
+`api.open_login_session` and `api.close_login_session`), granted once at the end of the
+deploy (`deploy/finalize.sql`). The admin login has no grant of its own; it is a member of the
 owner. The optional jobs login executes every `api.job_*` routine and nothing
 else. No routine is executable by `PUBLIC`. `lib/__test__/test_exact_grants.sql`
 fails the deploy on any other grant.
@@ -805,7 +857,7 @@ key points at one with it (its rows belong to an organization too, so an
 exemption does not cover it), a table with an organization column, row-level
 security off and a `SELECT` grant beyond the owner, admin and kernel, and an
 exemption whose table is gone or now forced. The organization columns are
-`pg_temp.tenant_column()` in `deploy.sql`.
+`pg_temp.tenant_column()` in `deploy/settings.sql`.
 
 **Kernels.** Membership rows are read by requests through the owner's
 policies (themselves, their organization, the organizations they belong to)
@@ -846,12 +898,12 @@ file's `CREATE OR REPLACE` works, and the file hands it over again.
 | `internal` | Deployment tracking, infrastructure | kernel |
 | `extensions` | `uuid-ossp`, `pgcrypto`, `pg_trgm`, `hstore`, `btree_gist`, kept out of `search_path` conflicts | PUBLIC |
 
-`pg_temp.approved_schema_grant()` in `deploy.sql` holds this table as a list,
+`pg_temp.approved_schema_grant()` in `deploy/settings.sql` holds this table as a list,
 and `lib/__test__/test_approved_schemas.sql` fails the deploy on a schema or
 schema grant it does not name. A project that creates a schema adds its rows.
 
 The database-wide settings come from one list, `pg_temp.database_setting()` in
-`deploy.sql`; add a row there rather than an `ALTER DATABASE` elsewhere. An
+`deploy/settings.sql`; add a row there rather than an `ALTER DATABASE` elsewhere. An
 extension already installed in another schema (some images pre-install them in
 `public`) is moved into `extensions`; one that cannot be moved stops the deploy
 with the commands to recreate it.
@@ -1155,7 +1207,7 @@ it cannot pass by looking at nothing.
 | `test_rls_initplan.sql` | a row policy calling an identity reader (`api.current_organization_id()`, `api.has_permission(...)`, ...) without wrapping it as `(SELECT ...)`, which runs it once per row instead of once per query |
 | `test_policy_drift.sql` | a row policy that differs from what the deploy's files left (`ALTER POLICY` by hand), one no deploy file created, or one that is gone. The deploy records each policy a file creates, changes or drops in `internal.policy_fingerprint`; change a policy in a new run-once file |
 | `test_fk_index_coverage.sql` | a foreign key no index leads with (a key holding an organization column is judged by its other column, led by it or by `(organization, it)`). A key left unindexed on purpose is declared in the run-once file that creates it: `SELECT pg_temp.exempt_from_fk_index('core.task', '{created_by_user_id}', '<reason>');` (recorded in `internal.fk_index_exemption`); an exemption naming no unindexed key fails as stale |
-| `test_approved_schemas.sql` | an application schema, or a grant on one, that `pg_temp.approved_schema_grant()` in `deploy.sql` does not list, or a listed one the database lacks. A new schema adds its rows there |
+| `test_approved_schemas.sql` | an application schema, or a grant on one, that `pg_temp.approved_schema_grant()` in `deploy/settings.sql` does not list, or a listed one the database lacks. A new schema adds its rows there |
 | `test_handler_context_reads.sql` | a handler, `api.job_*` or `core` routine reading an `auth.*` setting or a session header by name instead of the typed readers |
 | `test_exact_grants.sql` | see Role Hierarchy |
 | `test_common_reach.sql` | a routine pinning a `search_path` without `common` |
@@ -1165,7 +1217,7 @@ it cannot pass by looking at nothing.
 
 Eight more checks ship off: each encodes one house's rules, so a project
 switches on the ones it holds. A switch is a row in `pg_temp.guard_enabled()`
-in `deploy.sql`; set it to `true`:
+in `deploy/settings.sql`; set it to `true`:
 
 ```sql
     SELECT o.enabled INTO v_enabled FROM (VALUES
@@ -1187,7 +1239,7 @@ in `deploy.sql`; set it to `true`:
 Off, each file still proves on a planted object that its check works, so a
 switched-on option cannot pass by looking at nothing. On, an object it should
 let pass is listed with the reason in `pg_temp.guard_exemption()` in
-`deploy.sql`, spelled as the error names it; for `trigger_allowlist` that list
+`deploy/settings.sql`, spelled as the error names it; for `trigger_allowlist` that list
 is the allowlist:
 
 ```sql

@@ -1,20 +1,17 @@
 -- Proves: the handler, route and request-log analytics views answer.
 -- ============================================================================
--- Test: Analytics views (handler, route, exchange)
+-- Test: the analytics views report every handler once with its route and
+-- drift, and every exchange with its replay statement
 -- ============================================================================
 
+-- Handler and route views
 DO $$
 DECLARE
     v_handler_count int;
     v_route_count int;
     v_info record;
 BEGIN
-    RAISE NOTICE '-> Testing analytics views';
-
-    -- ========================================================================
     -- vw_handler_info: function_exists and definition_drifted
-    -- ========================================================================
-
     SELECT count(*) INTO v_handler_count FROM api.vw_handler_info;
     IF coalesce(v_handler_count, 0) < 1 THEN
         RAISE EXCEPTION 'vw_handler_info should have at least 1 row (demo handlers registered)';
@@ -41,12 +38,7 @@ BEGIN
         RAISE EXCEPTION 'hello_world should have a REST route';
     END IF;
 
-    RAISE NOTICE '  + vw_handler_info: function_exists=true, definition_drifted=false for hello_world';
-
-    -- ========================================================================
     -- vw_handler_info: schema coverage columns
-    -- ========================================================================
-
     SELECT has_output_schema INTO v_info
     FROM api.vw_handler_info
     WHERE handler_function_name = 'hello_world';
@@ -58,12 +50,7 @@ BEGIN
         RAISE EXCEPTION 'hello_world should have output schema';
     END IF;
 
-    RAISE NOTICE '  + vw_handler_info: schema coverage columns present';
-
-    -- ========================================================================
     -- vw_handler_summary: single row with counts
-    -- ========================================================================
-
     DECLARE
         v_summary record;
     BEGIN
@@ -78,14 +65,9 @@ BEGIN
         IF coalesce(v_summary.rest_handlers, 0) < 1 THEN
             RAISE EXCEPTION 'vw_handler_summary rest_handlers should be >= 1';
         END IF;
-
-        RAISE NOTICE '  + vw_handler_summary: total=%, rest=%', v_summary.total_handlers, v_summary.rest_handlers;
     END;
 
-    -- ========================================================================
     -- vw_route_info: unified route view
-    -- ========================================================================
-
     SELECT count(*) INTO v_route_count FROM api.vw_route_info;
     IF coalesce(v_route_count, 0) < 1 THEN
         RAISE EXCEPTION 'vw_route_info should have at least 1 route';
@@ -98,12 +80,7 @@ BEGIN
         RAISE EXCEPTION 'vw_route_info should show hello_world under rest';
     END IF;
 
-    RAISE NOTICE '  + vw_route_info: % routes, hello_world found under rest', v_route_count;
-
-    -- ========================================================================
     -- vw_route_summary: single row
-    -- ========================================================================
-
     DECLARE
         v_rsummary record;
     BEGIN
@@ -114,12 +91,10 @@ BEGIN
         IF coalesce(v_rsummary.total_routes, 0) < 1 THEN
             RAISE EXCEPTION 'vw_route_summary total_routes should be >= 1';
         END IF;
-        RAISE NOTICE '  + vw_route_summary: total=%, rest=%', v_rsummary.total_routes, v_rsummary.rest_routes;
     END;
-
-    RAISE NOTICE '+ Handler/route analytics view tests passed';
 END $$;
 
+-- Exchange views
 DO $$
 DECLARE
     v_response api.http_response;
@@ -127,25 +102,15 @@ DECLARE
     v_summary record;
     v_replay text;
 BEGIN
-    RAISE NOTICE '-> Testing exchange analytics views';
-
-    -- ========================================================================
     -- Generate a REST exchange by invoking hello_world (with auth).
     -- "access": "authenticated" needs a live login session of an enabled person.
-    -- ========================================================================
-
     PERFORM pg_temp.test_login('test', 'admin', 'analytics-admin@example.test', NULL, true);
 
     v_response := api.rest_invoke('GET', '/hello?name=ViewTest',
         pg_temp.test_session_headers('test|admin'), null::bytea);
-    IF (v_response).status_code IS DISTINCT FROM 200 THEN
-        RAISE EXCEPTION 'hello_world invocation failed: %', (v_response).status_code;
-    END IF;
+    PERFORM pg_temp.expect_status('hello_world invocation failed', v_response, 200);
 
-    -- ========================================================================
     -- vw_rest_exchange_info: exchange visible with replay_sql
-    -- ========================================================================
-
     SELECT count(*) INTO v_exchange_count FROM api.vw_rest_exchange_info;
     IF coalesce(v_exchange_count, 0) < 1 THEN
         RAISE EXCEPTION 'vw_rest_exchange_info should have at least 1 row after invocation';
@@ -160,12 +125,7 @@ BEGIN
         RAISE EXCEPTION 'vw_rest_exchange_info replay_sql should call api.replay_exchange, got: %', v_replay;
     END IF;
 
-    RAISE NOTICE '  + vw_rest_exchange_info: % exchanges, replay_sql generated', v_exchange_count;
-
-    -- ========================================================================
     -- vw_exchange_summary: counts updated
-    -- ========================================================================
-
     SELECT total_exchanges, rest_exchanges, error_count
     INTO v_summary FROM api.vw_exchange_summary;
 
@@ -179,13 +139,7 @@ BEGIN
         RAISE EXCEPTION 'vw_exchange_summary rest_exchanges should be >= 1';
     END IF;
 
-    RAISE NOTICE '  + vw_exchange_summary: total=%, rest=%, errors=%',
-        v_summary.total_exchanges, v_summary.rest_exchanges, v_summary.error_count;
-
-    -- ========================================================================
     -- vw_exchange_stats: at least one row with REST protocol
-    -- ========================================================================
-
     IF NOT EXISTS (
         SELECT 1 FROM api.vw_exchange_stats
         WHERE protocol = 'rest' AND _grp_protocol = 0
@@ -193,16 +147,12 @@ BEGIN
         RAISE EXCEPTION 'vw_exchange_stats should have a rest protocol row';
     END IF;
 
-    RAISE NOTICE '  + vw_exchange_stats: REST protocol row present';
-
     IF EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_schema = 'api' AND table_name LIKE 'vw\_%exchange%' AND column_name LIKE '%pending%'
     ) THEN
         RAISE EXCEPTION 'TEST FAILED: an exchange view still has a pending column; the log is written with its response';
     END IF;
-
-    RAISE NOTICE '+ Exchange analytics view tests passed';
 END $$;
 
 DO $$

@@ -74,7 +74,7 @@ it backs are published again.
 | [Advisory lock functions](https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS) | 2026-11-11 | `pg_advisory_unlock` returns false and the server reports a warning when the lock was not held (`db/lib/__test__/test_jobs.sql`) |
 | [Database roles](https://www.postgresql.org/docs/current/database-roles.html) | 2026-11-11 | "Database roles are global across a database cluster installation (and not per individual database)", so `provision-principals` makes login roles in the maintenance database (`jobs/patch_desk_job.py`) |
 | [CREATE POLICY (PostgreSQL 18)](https://www.postgresql.org/docs/current/sql-createpolicy.html) | 2026-11-11 | a policy's `TO` defaults to `PUBLIC`, which applies it to all roles; a row is accessible only when one permissive policy and all restrictive policies pass (`db/core/patch-export-structure.sql`, `db/README.md` "The export job") |
-| [Event trigger functions in PL/pgSQL](https://www.postgresql.org/docs/current/plpgsql-trigger.html#PLPGSQL-EVENT-TRIGGER) | 2026-11-11 | a function called as an event trigger is declared with no arguments and returns `event_trigger` (`db/deploy.sql`) |
+| [Event trigger functions in PL/pgSQL](https://www.postgresql.org/docs/current/plpgsql-trigger.html#PLPGSQL-EVENT-TRIGGER) | 2026-11-11 | a function called as an event trigger is declared with no arguments and returns `event_trigger` (`db/deploy/providers.sql`) |
 
 ## Other tools
 
@@ -124,7 +124,7 @@ out of published text unless they are worded as an observation.
   the SDK instead.
 - Observed on the demo (2026-11-09): a Lakebase database's `public` schema
   holds platform helper functions (`grant_all_on_new_sequences()` and others)
-  that PUBLIC may execute; `db/deploy.sql` leaves them out when it revokes
+  that PUBLIC may execute; `db/deploy/finalize.sql` leaves them out when it revokes
   `EXECUTE` from `PUBLIC`.
 - Observed on the demo (2026-11-09): in the serverless `db_deploy` task,
   `WorkspaceClient()` with no arguments acts as the job's identity (the

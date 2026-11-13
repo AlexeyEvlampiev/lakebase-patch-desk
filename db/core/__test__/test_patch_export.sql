@@ -90,7 +90,7 @@ BEGIN
 
     -- Marking needs the login to be a registered service principal (read
     -- as the kernel: the owner sees no service principal outside a request).
-    IF NOT pg_temp.service_registered(session_user) THEN
+    IF NOT internal.service_registered(session_user) THEN
         v_marked := api.job_patch_mark_exported(ARRAY[v_a.object_id]);
         IF v_marked IS NOT NULL THEN
             RAISE EXCEPTION 'TEST FAILED: a login that is no registered service principal must mark nothing, got %', v_marked;

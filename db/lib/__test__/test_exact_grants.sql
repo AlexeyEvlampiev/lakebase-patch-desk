@@ -10,7 +10,7 @@
 -- grant of its own (it is a member of the owner). PUBLIC executes nothing.
 -- The kernel role cannot log in, calls no SECURITY DEFINER routine of the
 -- owner, reaches outside membership and common only the request-context
--- readers, and its own routines are granted to no role but the owner. The
+-- readers and internal.mcp_write_tool_exists, and its own routines are granted to no role but the owner. The
 -- optional jobs login, when it exists and is a registered service principal,
 -- executes every api.job_* routine and nothing else; unregistered, it executes
 -- nothing. The gateway executes no job. With provider_role_pattern set, the
@@ -18,6 +18,7 @@
 -- than the owner) are not the application's and are left out.
 -- ============================================================================
 
+-- One query, one UNION branch per rule; each row names the rule it breaks.
 CREATE FUNCTION pg_temp.grant_drift()
 RETURNS TABLE (role_name text, routine text, problem text)
 LANGUAGE sql
@@ -29,7 +30,7 @@ AS $$
                pg_temp.deployment_setting('database_api_role')::regrole AS api,
                pg_temp.deployment_setting('database_kernel_role')::regrole AS kernel,
                to_regrole(quote_ident(pg_temp.deployment_setting('database_jobs_role'))) AS jobs,
-               pg_temp.service_registered(pg_temp.deployment_setting('database_jobs_role')) AS jobs_registered
+               internal.service_registered(pg_temp.deployment_setting('database_jobs_role')) AS jobs_registered
     ),
     routine AS (
         SELECT p.oid, p.oid::regprocedure::text AS name, p.proowner, p.prosecdef, p.proacl
@@ -76,7 +77,8 @@ AS $$
                ('api.is_platform_operator()'),
                ('api.current_login_session_id()'),
                ('api.current_organization_session_id()'),
-               ('internal.transaction_is_read_only()')
+               ('internal.transaction_is_read_only()'),
+               ('internal.mcp_write_tool_exists(text)')
     )
     SELECT 'api', r.name, 'executable, not on the gateway''s list'
     FROM routine r, role
@@ -201,7 +203,7 @@ BEGIN
            OR membership.fn_register_service_principal('service.jobs', 'Background jobs', v_jobs) IS DISTINCT FROM v_service THEN
             RAISE EXCEPTION 'TEST FAILED: the jobs login must register once as service principal service.jobs, got %', row_to_json(v_service);
         END IF;
-        PERFORM pg_temp.grant_jobs();
+        PERFORM internal.grant_jobs();
     END IF;
 
     SELECT string_agg(format('%s %s: %s', role_name, coalesce(routine, ''), problem), ', ' ORDER BY role_name, routine)
@@ -210,7 +212,7 @@ BEGIN
         RAISE EXCEPTION 'TEST FAILED: with the jobs login, grants differ from the lists: %', v_drift;
     END IF;
 
-    IF NOT pg_temp.service_registered(v_jobs) THEN
+    IF NOT internal.service_registered(v_jobs) THEN
         RAISE DEBUG '   jobs login % is no registered service principal; live probe skipped', v_jobs;
         RETURN;
     END IF;
@@ -315,7 +317,7 @@ BEGIN
     EXECUTE format('SET ROLE %I', v_owner);
     CREATE FUNCTION internal.provider_probe_owned() RETURNS int LANGUAGE sql AS 'SELECT 1';
     GRANT EXECUTE ON FUNCTION internal.provider_probe_owned() TO PUBLIC;
-    PERFORM set_config('deployment.provider_role_pattern', '', true);
+    PERFORM set_config('pgmi.provider_role_pattern', '', true);
 
     SELECT string_agg(format('%s %s', role_name, routine), ', ' ORDER BY role_name, routine) INTO v_drift
     FROM pg_temp.grant_drift() WHERE routine LIKE '%provider_probe%';
@@ -325,7 +327,7 @@ BEGIN
         RAISE EXCEPTION 'TEST FAILED: without provider_role_pattern all three PUBLIC routines must fail, named: %', v_drift;
     END IF;
 
-    PERFORM set_config('deployment.provider_role_pattern', 'pgmi\_provider\_%', true);
+    PERFORM set_config('pgmi.provider_role_pattern', 'pgmi\_provider\_%', true);
     SELECT string_agg(format('%s %s', role_name, routine), ', ' ORDER BY role_name, routine) INTO v_drift
     FROM pg_temp.grant_drift() WHERE routine LIKE '%provider_probe%';
     IF coalesce(v_drift, '') LIKE '%public.provider_probe()%'

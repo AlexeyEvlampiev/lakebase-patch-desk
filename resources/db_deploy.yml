@@ -27,7 +27,7 @@ resources:
               # The admin role's password, made for each run and passed only
               # in the environment; nobody signs in as that role on the demo.
               - --admin-password
-              # Roles and schemas Lakebase adds on its own (db/session.xml).
+              # Roles and schemas Lakebase adds on its own (db/deploy/parameters.xml).
               - '--param=provider_role_pattern=databricks\_%'
               - '--param=provider_schemas=["__db_system"]'
               # oidc_issuers: the workspace's own issuer, read by the job.

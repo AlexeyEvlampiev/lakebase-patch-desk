@@ -42,6 +42,7 @@ Multi-protocol HTTP handling for REST, JSON-RPC, and MCP.
 | `10-mcp-protocol.sql` | MCP protocol layer: both eras on one endpoint (`server/discover` and `_meta` versions for 2026-07-28, `mcp_initialize` / `mcp_ping` for legacy clients), `mcp_handle_request` |
 | `11-openapi.sql` | OpenAPI 3.1 generator over the handler registry, served at `GET /openapi.json` |
 | `12-maintenance.sql` | Background jobs: the driver `api.job_run` and the run-log writers `api.job_run_started` / `api.job_run_finished`. Exchange retention: `api.exchange_retention()` (deploy parameter `exchange_retention_days`), `api.purge_exchanges_batch`, the `purge_exchanges` job (`api.job_purge_exchanges`) |
+| `13-entry-point-grants.sql` | `internal.grant_gateway_entry_points()`: the api role's exact grant list (plus `api.open_dev_login_session` with `env=dev`), called by `deploy/finalize.sql` after the PUBLIC sweep |
 | `views.sql` | Analysis and summary views over handlers, routes and exchanges |
 
 **Key Types:**
@@ -95,6 +96,8 @@ Per-route isolation floor (`minTransactionIsolation`), read-only declaration (`r
 |------|---------|
 | `environment.sql` | `internal.environment`: the one-row `dev`/`test`/`prod` label the first deploy writes and every redeploy is checked against (run once) |
 | `job-run-log.sql` | `internal.job_run_log`: one row per background-job run, live, succeeded or abandoned (run once) |
+| `dev-login.sql` | `internal.retire_dev_login()`: on a database relabelled from dev, drops the dev entry point, revokes development sessions and removes unused development issuers |
+| `jobs-login.sql` | `internal.grant_jobs()` and `internal.service_registered(role)`: the optional jobs login's grants, only for a registered service principal |
 | `views.sql` | Deploy history: `internal.vw_deployment` (one row per deploy) and `internal.vw_deployed_script` (one row per script) |
 
 ### `core/` - Entity Hierarchy
@@ -141,6 +144,7 @@ Pure utility functions and domain types shared across every schema.
 
 | File | Purpose |
 |------|---------|
+| `catalog.sql` | `common.has_column(table, column)`: whether a table has a live column; used by the core setup functions and the deploy-time helpers |
 | `cast.sql` | Safe type casting: `common.try_cast(text, default)` overloads (uuid, boolean, integer, bigint, numeric, interval, timestamp, timestamptz, date, inet); whitespace ignored, NaN/infinity/overflow give the default |
 | `cast-operators.sql` | The `common.?>` try-cast operator over `try_cast` (run-once: operators have no `OR REPLACE`). Every pinned `search_path` names `common`, so it resolves everywhere (`lib/__test__/test_common_reach.sql`) |
 | `encoding-structure.sql` | Bytea encoding wrapper types (`common.utf8`, `common.latin1`, `common.win1252`) (run once) |
@@ -191,7 +195,7 @@ Tests for the framework itself (not your application).
 | `test_schema_and_tags.sql` | `api.json_schema` domain, `$schema` injection, `_meta.tags`, auth hiding |
 | `test_transaction_isolation.sql` | Per-route isolation floor enforcement |
 | `test_transaction_policy.sql` | Read-only routes and resolve-then-open |
-| `test_approved_schemas.sql` | The application schemas and their grants are exactly `pg_temp.approved_schema_grant()` in deploy.sql |
+| `test_approved_schemas.sql` | The application schemas and their grants are exactly `pg_temp.approved_schema_grant()` in deploy/settings.sql |
 | `test_error_answer_rollback.sql` | An error answer (REST/RPC 400+, an MCP error or `isError`) leaves no write behind; its exchange row still commits |
 | `test_exchange_indexes.sql` | Every exchange-log lookup the template ships uses an index |
 | `test_exchange_log.sql` | The exchange log finds a request by its id, stores its context, and replays REST, RPC and MCP calls as their caller inside a rollback |

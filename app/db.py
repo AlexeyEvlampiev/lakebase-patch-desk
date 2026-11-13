@@ -45,7 +45,7 @@ HTTP_TIMEOUT_S = 30
 RETRY_TIMEOUT_S = 60
 DB_TIMEOUT_S = 60
 # Postgres refused the login: invalid authorization, wrong password, or no
-# CONNECT on the database (deploy.sql revokes it from PUBLIC; provisioning
+# CONNECT on the database (db/deploy/bootstrap.sql revokes it from PUBLIC; provisioning
 # grants it to the people in the patch desk groups).
 LOGIN_REFUSED = {"28000", "28P01", "42501"}
 DATABASE = "lakebase_apps"
